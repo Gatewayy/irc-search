@@ -285,7 +285,7 @@ def view_onthisday(qs):
         top = c.execute("select net, chan, count(*) n from m where t >= ? and t < ? group by net, chan order by n desc limit 3", (a, b)).fetchall()
         where = ", ".join(f'<a href="/?{urlencode({"net": t_[0], "chan": t_[1], "q": ""})}">{esc(t_[1])}</a> <span class="pill">{esc(t_[0])}</span>' for t_ in top)
         lines = "".join(f'<a href="/ctx?id={r[0]}#l{r[0]}" style="text-decoration:none;color:inherit">{line_html(r)}</a>' for r in picks)
-        blocks.append(f'<div class="res"><div class="meta"><strong style="color:var(--text);font-size:1.05rem">{y} · {now.year - y} year{"s" if now.year - y != 1 else ""} ago</strong>'
+        blocks.append(f'<div class="res"><div class="meta"><strong style="color:var(--text);font-size:1.05rem">{y} · {"today" if y == now.year else str(now.year - y) + " year" + ("s" if now.year - y != 1 else "") + " ago"}</strong>'
                       f'<span>{n:,} lines · {mine or 0:,} by you · {where}</span></div><div class="log">{lines}</div></div>')
     prev = datetime(2000, mo, d).toordinal(); nav = []
     for delta, label in ((-1, "← previous day"), (1, "next day →")):
