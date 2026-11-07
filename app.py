@@ -113,7 +113,7 @@ td.n{text-align:right;font-variant-numeric:tabular-nums}.more{display:flex;justi
 """
 
 def page(title, body, private=True):
-    nav = ('<nav><a href="/">Search</a><a href="/channels">Channels</a><a href="/quotes">Quotes</a></nav>' if private else "")
+    nav = ('<nav><a href="/">Search</a><a href="/onthisday">On this day</a><a href="/random">Random</a><a href="/me">You on IRC</a><a href="/channels">Channels</a><a href="/quotes">Quotes</a></nav>' if private else "")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="{'noindex,nofollow' if private else 'noindex'}"><title>{esc(title)}</title>
@@ -239,6 +239,94 @@ def view_channels(qs):
     return page("Channels · irclogs", f'<p class="hint"><a href="/channels">All</a> {tabs}</p><div class="log" style="padding:.3rem .6rem">'
                 f'<table><tr><th>Network</th><th>Channel / query</th><th class="n">Lines</th><th class="n">Years</th></tr>{"".join(tr)}</table></div>')
 
+# ---------- nostalgia ----------
+ME = re.compile(r"^gatewayy", re.I)
+BOTS = {"o3", "u", "x3", "stats", "heretic", "chanserv", "nickserv", "p", "x", "grok", "idlebot", "cableguy", "athena"}
+MIN_LEN = 25
+
+def interesting(nick, text):
+    return nick.lower().rstrip("_`^-|") not in BOTS and len(text) >= MIN_LEN and not text.startswith(("[", "!", "."))
+
+def random_line():
+    c = hist()
+    lo, hi = c.execute("select min(id), max(id) from m").fetchone()
+    for _ in range(40):
+        r = c.execute("select id, nick, text, act from m where id >= ? limit 30", (secrets.randbelow(hi - lo + 1) + lo,)).fetchall()
+        good = [x for x in r if not x[3] and interesting(x[1], x[2])]
+        if good:
+            return good[secrets.randbelow(len(good))][0]
+    return lo
+
+def day_window(y, mo, d):
+    a = datetime(y, mo, d, tzinfo=TZ)
+    return int(a.timestamp() * 1000), int(a.timestamp() * 1000) + 86_400_000
+
+def view_onthisday(qs):
+    now = datetime.now(TZ)
+    try:
+        mo, d = int(qs.get("m", [now.month])[0]), int(qs.get("d", [now.day])[0]); datetime(2000, mo, d)
+    except (ValueError, TypeError):
+        mo, d = now.month, now.day
+    c = hist()
+    y0 = datetime.fromtimestamp(c.execute("select min(t) from m").fetchone()[0] / 1000, TZ).year
+    blocks = []
+    for y in range(now.year, y0 - 1, -1):
+        try:
+            a, b = day_window(y, mo, d)
+        except ValueError:
+            continue  # Feb 29
+        n, mine = c.execute("select count(*), sum(nick like 'gatewayy%') from m where t >= ? and t < ?", (a, b)).fetchone()
+        if not n:
+            continue
+        rows = c.execute("select id, net, chan, t, nick, act, text from m where t >= ? and t < ? order by random() limit 60", (a, b)).fetchall()
+        mine_rows = [r for r in rows if ME.match(r[4]) and len(r[6]) >= 8]
+        picks = (mine_rows[:2] + [r for r in rows if interesting(r[4], r[6]) and r not in mine_rows])[:4]
+        picks.sort(key=lambda r: r[3])
+        top = c.execute("select net, chan, count(*) n from m where t >= ? and t < ? group by net, chan order by n desc limit 3", (a, b)).fetchall()
+        where = ", ".join(f'<a href="/?{urlencode({"net": t_[0], "chan": t_[1], "q": ""})}">{esc(t_[1])}</a> <span class="pill">{esc(t_[0])}</span>' for t_ in top)
+        lines = "".join(f'<a href="/ctx?id={r[0]}#l{r[0]}" style="text-decoration:none;color:inherit">{line_html(r)}</a>' for r in picks)
+        blocks.append(f'<div class="res"><div class="meta"><strong style="color:var(--text);font-size:1.05rem">{y} · {now.year - y} year{"s" if now.year - y != 1 else ""} ago</strong>'
+                      f'<span>{n:,} lines · {mine or 0:,} by you · {where}</span></div><div class="log">{lines}</div></div>')
+    prev = datetime(2000, mo, d).toordinal(); nav = []
+    for delta, label in ((-1, "← previous day"), (1, "next day →")):
+        x = datetime.fromordinal(prev + delta)
+        nav.append(f'<a href="/onthisday?m={x.month}&d={x.day}">{label}</a>')
+    title = datetime(2000, mo, d).strftime("%B %-d")
+    body = (f'<div class="qhead"><h1>On this day: {esc(title)}</h1><span>{" · ".join(nav)}</span></div>'
+            f'<p class="hint">Random lines from {esc(title)} in every year with history. Click a line to open it in context (and share it).</p>'
+            + ("".join(blocks) or '<div class="empty">Nothing logged on this date.</div>'))
+    return page(f"On this day · {title} · irclogs", body)
+
+_me = {"at": 0, "html": ""}
+def me_stats():
+    c = hist()
+    mine = c.execute("select m.net, m.chan, m.t from f join m on m.id = f.rowid where f match 'nick:gatewayy*'").fetchall()
+    ys, cs = {}, {}
+    for net, chan, t in mine:
+        d = datetime.fromtimestamp(t / 1000, TZ)
+        e = ys.setdefault(d.year, [0, set()]); e[0] += 1; e[1].add(d.toordinal())
+        cs[(net, chan)] = cs.get((net, chan), 0) + 1
+    years = [(y, v[0], len(v[1])) for y, v in sorted(ys.items())]
+    chans = sorted(((a, b, n) for (a, b), n in cs.items()), key=lambda x: -x[2])[:12]
+    total = sum(r[1] for r in years); days = sum(r[2] for r in years); mx = max([r[1] for r in years] or [1])
+    first = c.execute("select m.t, m.net, m.chan, m.text, m.id from f join m on m.id = f.rowid where f match 'nick:gatewayy*' order by m.t limit 1").fetchone()
+    bars = "".join(f'<tr><td>{y}</td><td class="n">{n:,}</td><td class="n">{dd:,}</td><td style="width:55%"><div style="background:var(--accent);opacity:.75;height:.7rem;border-radius:4px;width:{n / mx * 100:.1f}%"></div></td></tr>'
+                   for y, n, dd in years)
+    ch = "".join(f'<tr><td><span class="pill">{esc(a)}</span></td><td><a href="/?{urlencode({"net": a, "chan": b, "nick": "Gatewayy"})}">{esc(b)}</a></td><td class="n">{n:,}</td></tr>' for a, b, n in chans)
+    est = total * 8 / 3600  # ~8 s of typing/reading per line you sent, a rough feel only
+    firsth = (f'<p>Your first line on record: <a href="/ctx?id={first[4]}#l{first[4]}">{esc(fmt_t(first[0]))} in {esc(first[2])} ({esc(first[1])})</a>: '
+              f'<code>{esc(first[3][:140])}</code></p>' if first else "")
+    return f"""<div class="qhead"><h1>You on IRC</h1><span class="pill">nick:Gatewayy*</span></div>
+<p style="font-size:1.15rem"><strong>{total:,}</strong> lines from you across <strong>{days:,}</strong> days with at least one line,
+roughly <strong>{est:,.0f} hours</strong> of just your own typing (at ~8 s a line, before all the lurking).</p>{firsth}
+<div class="log" style="padding:.3rem .6rem;margin-bottom:1rem"><table><tr><th>Year</th><th class="n">Your lines</th><th class="n">Days</th><th></th></tr>{bars}</table></div>
+<div class="log" style="padding:.3rem .6rem"><table><tr><th>Network</th><th>Where you talked most</th><th class="n">Lines</th></tr>{ch}</table></div>"""
+
+def view_me(qs):
+    if time.time() - _me["at"] > 6 * 3600 or not _me["html"]:
+        _me.update(at=time.time(), html=me_stats())
+    return page("You on IRC · irclogs", _me["html"])
+
 def mask_map(lines):
     m = {}
     for l in lines:
@@ -345,6 +433,12 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, out) if out else self.send(404, page("Not found", '<div class="empty">Line not found.</div>'))
             if u.path == "/channels":
                 return self.send(200, view_channels(qs))
+            if u.path == "/onthisday":
+                return self.send(200, view_onthisday(qs))
+            if u.path == "/random":
+                i = random_line(); return self.redirect(f"/ctx?id={i}#l{i}")
+            if u.path == "/me":
+                return self.send(200, view_me(qs))
             if u.path == "/quotes":
                 return self.send(200, view_quotes(qs))
             return self.send(404, page("Not found", '<div class="empty">Not found.</div>', private=False))
