@@ -1,0 +1,31 @@
+# irclogs: private IRC history search + public quote pages. Code only; data stays on the host.
+#   /opt/irc-search          FTS index (history.sqlite3), mounted read-only
+#   /opt/irc-search-quotes   shared quotes (quotes.sqlite3), writable
+services:
+  irclogs:
+    image: python:3.12-slim
+    restart: unless-stopped
+    command: ["python", "-u", "/app/app.py"]
+    environment:
+      HISTORY_DB: /data/history.sqlite3
+      QUOTES_DB: /quotes/quotes.sqlite3
+      PORT: "8080"
+      TZ_NAME: America/Chicago
+      PUBLIC_BASE: https://irclogs.gatewayy.net
+    volumes:
+      - ./app.py:/app/app.py:ro
+      - /opt/irc-search:/data:ro
+      - /opt/irc-search-quotes:/quotes
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+    ports:
+      - "127.0.0.1:21090:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
