@@ -97,7 +97,7 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 .log{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
 .ln{display:grid;grid-template-columns:auto 9.5rem 1fr;gap:.75rem;padding:.4rem .9rem;border-top:1px solid var(--line);align-items:baseline}
 .ln:first-child{border-top:0}.ln.hit{background:var(--panel2)}.ln .ts{color:var(--muted);font-size:.82rem;white-space:nowrap;font-variant-numeric:tabular-nums}
-.ln .who{font-weight:600;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ln .who{display:block;font-weight:600;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.ln>div{min-width:0}
 .ln .msg{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92rem;word-break:break-word;white-space:pre-wrap}
 .ln .act{font-style:italic}.ln input{margin:0;width:1.05rem;height:1.05rem}
 mark{background:var(--mark);color:var(--markt);border-radius:3px;padding:0 .1em}
@@ -123,7 +123,7 @@ def page(title, body, private=True):
 def who_html(nick, act=False):
     h = nick_hue(nick)
     style = f"color:hsl({h} 70% 62%)"
-    return f'<span class="who" style="{style}">{"* " if act else ""}{esc(nick)}</span>'
+    return f'<span class="who" style="{style}" title="{esc(nick)}">{"* " if act else ""}{esc(nick)}</span>'
 
 def line_html(r, hit=False, checkbox=False, marks=False, with_date=False):
     _id, net, chan, t, nick, act, text = r[:7]
