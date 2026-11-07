@@ -113,7 +113,7 @@ td.n{text-align:right;font-variant-numeric:tabular-nums}.more{display:flex;justi
 """
 
 def page(title, body, private=True):
-    nav = ('<nav><a href="/">Search</a><a href="/onthisday">On this day</a><a href="/random">Random</a><a href="/me">You on IRC</a><a href="/channels">Channels</a><a href="/quotes">Quotes</a></nav>' if private else "")
+    nav = ('<nav><a href="/">Search</a><a href="/onthisday">On this day</a><a href="/random">Random</a><a href="/me">You on IRC</a><a href="/channels">Channels</a><a href="/quotes">Quotes</a><a href="/help">Help</a></nav>' if private else "")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="{'noindex,nofollow' if private else 'noindex'}"><title>{esc(title)}</title>
@@ -148,18 +148,17 @@ def view_search(qs):
 <input name="year" value="{esc(year)}" placeholder="year" size="5" inputmode="numeric">
 <select name="order"><option value="new"{" selected" if order == "new" else ""}>Newest first</option>
 <option value="old"{" selected" if order == "old" else ""}>Oldest first</option></select></div></form>
-<p class="hint">Supports <code>"phrases"</code>, <code>AND</code>/<code>OR</code>/<code>NOT</code>, <code>prefix*</code>. Click a timestamp-line's link to open it in context and share it.</p>"""
+<p class="hint">Supports <code>"phrases"</code>, <code>AND</code>/<code>OR</code>/<code>NOT</code>, <code>prefix*</code>, <code>NEAR(a b)</code>, <code>nick:Name</code>. <a href="/help">All search tricks →</a></p>"""
     if not (q or nick):
         total = sum(r[2] for r in channels())
         return page("irclogs", form + f'<div class="empty">{total:,} lines across {len(channels()):,} channels and {len(nets())} networks.</div>')
     where, args = [], []
+    parts = []
     if q:
-        where.append("f match ?"); args.append(fts_query(q))
+        parts.append("(" + fts_query(q) + ")")
     if nick:
-        if q:
-            where.append("m.nick = ? collate nocase"); args.append(nick)
-        else:
-            where.append("f match ?"); args.append('nick:"' + nick.replace('"', '""') + '"')
+        parts.append('nick:"' + nick.replace('"', '""') + '"')
+    where.append("f match ?"); args.append(" AND ".join(parts))
     if net:
         where.append("m.net = ?"); args.append(net)
     if chan:
@@ -398,6 +397,73 @@ def do_share(form):
     qc.commit()
     return qid, None
 
+
+HELP_HTML = """<div class="qhead"><h1>Search help</h1><span class="pill">irclogs</span></div>
+<div class="log" style="padding:1rem 1.2rem;margin-bottom:1rem">
+<h2 style="margin-top:0">The search box</h2>
+<p>Case doesn't matter, accents are ignored, and words are matched whole (punctuation splits words, so <code>#linux</code> finds <code>linux</code>).</p>
+<table>
+<tr><th>Type this</th><th>Finds</th></tr>
+<tr><td><code>znc webadmin</code></td><td>lines with <b>both</b> words, anywhere in the line (a space means AND)</td></tr>
+<tr><td><code>"jupe andromeda"</code></td><td>the exact phrase, words next to each other in that order</td></tr>
+<tr><td><code>znc OR bnc</code></td><td>either word (<code>OR</code>, <code>AND</code>, <code>NOT</code> must be capitals)</td></tr>
+<tr><td><code>znc NOT webadmin</code></td><td>znc, but not lines that also say webadmin</td></tr>
+<tr><td><code>linu*</code></td><td>anything starting with linu: linux, linuxmint… (prefix only; no <code>*ux</code>)</td></tr>
+<tr><td><code>(znc OR bnc) AND osmium</code></td><td>group with parentheses</td></tr>
+<tr><td><code>NEAR(osmium link, 5)</code></td><td>both words within 5 words of each other (default 10)</td></tr>
+<tr><td><code>nick:Moose</code></td><td>lines <b>said by</b> Moose (also matches Moose_ / Moose`); combine: <code>nick:Gatewayy pizza</code></td></tr>
+<tr><td><code>nick:gate*</code></td><td>nicks starting with gate</td></tr>
+<tr><td><code>text:nick</code></td><td>the literal word "nick" in the message text (when a word looks like a column name)</td></tr>
+</table>
+<p class="hint">If the syntax doesn't parse (a stray quote or bracket), irclogs falls back to searching each word plainly.</p>
+<h2>Filters under the box</h2>
+<table>
+<tr><td><b>Network</b></td><td>AfterNET, BTN, Libera, P2P, PTP, Ars, SynIRC, plus the 2002–03 ones: NetGamers, kralizec, UnderNet, Legion, Chaos-Networks, IRC-Unity, LITECODE.NET</td></tr>
+<tr><td><b>#channel</b></td><td>exact channel or query name, e.g. <code>#linux</code>, <code>#afternet</code>, or a nick for a private query (<code>moose</code>). Combine with Network, since #linux exists on several.</td></tr>
+<tr><td><b>nick</b></td><td>same as <code>nick:Name</code> in the box; leave the box empty to read everything someone said</td></tr>
+<tr><td><b>year</b></td><td>one year, e.g. <code>2003</code></td></tr>
+<tr><td><b>Order</b></td><td>newest first (default) or oldest first: oldest is great for "when did I first mention X?"</td></tr>
+</table>
+<p class="hint">Results come 50 at a time; use More → at the bottom. A channel name in a result links to that channel's newest lines.</p>
+</div>
+<div class="log" style="padding:1rem 1.2rem;margin-bottom:1rem">
+<h2 style="margin-top:0">Recipes</h2>
+<table>
+<tr><td>Everything you said about Osmium, oldest first</td><td><code>osmium</code> + nick <code>Gatewayy</code> + Oldest first</td></tr>
+<tr><td>The Andromeda saga</td><td><code>andromeda</code>, Network NetGamers, Oldest first</td></tr>
+<tr><td>Your 2003 "u" era</td><td><code>u</code> + nick <code>Gatewayy</code> + year <code>2003</code></td></tr>
+<tr><td>Links someone posted</td><td><code>https</code> + nick <code>Locke</code></td></tr>
+<tr><td>Two people talking about something</td><td><code>(nick:Moose OR nick:Gatewayy) linking</code></td></tr>
+<tr><td>A server or host</td><td><code>"osmium afternet org"</code> (dots split words, so use a phrase)</td></tr>
+</table>
+</div>
+<div class="log" style="padding:1rem 1.2rem;margin-bottom:1rem">
+<h2 style="margin-top:0">Other pages</h2>
+<table>
+<tr><td><a href="/onthisday">On this day</a></td><td>today's date in every year with history: counts, how many were yours, busiest channels, a few random lines. <code>?m=11&amp;d=7</code> picks a date; ← / → walk the calendar.</td></tr>
+<tr><td><a href="/random">Random</a></td><td>jumps to a random real line (no bots, 25+ characters) in context. Reload for another.</td></tr>
+<tr><td><a href="/me">You on IRC</a></td><td>your lines per year, days active, top channels, first line on record (refreshes every 6 h).</td></tr>
+<tr><td><a href="/channels">Channels</a></td><td>every channel and query with line counts and years; filter by network.</td></tr>
+<tr><td><a href="/quotes">Quotes</a></td><td>quotes you've shared, with delete.</td></tr>
+</table>
+</div>
+<div class="log" style="padding:1rem 1.2rem;margin-bottom:1rem">
+<h2 style="margin-top:0">Sharing a quote</h2>
+<ol><li>Click <b>context ↗</b> on any result (or use Random / On this day).</li>
+<li>Tick the lines you want. <b>Show more around this</b> widens the window.</li>
+<li>Optional title; tick <b>mask nicks</b> to turn names into user1, user2… (also inside the text; the channel and network are hidden too).</li>
+<li><b>Create public quote</b> → you land on <code>/q/&lt;id&gt;</code>. That URL works for anyone; <code>/q/&lt;id&gt;.txt</code> is plain text. Only the ticked lines are copied; nothing else here is public.</li></ol>
+<p class="hint">Delete a quote in <a href="/quotes">Quotes</a> and its link stops working.</p>
+</div>
+<div class="log" style="padding:1rem 1.2rem">
+<h2 style="margin-top:0">On the VPS (command line)</h2>
+<p><code>irc-search 'query' [-n Network] [-c '#channel'] [-l 50] [--oldest] [--context 3]</code>: same query syntax as the box; <code>--context N</code> prints N lines around each hit.</p>
+<p class="hint">What's in here: IRCCloud history 2015–Nov 2026 and the 2002–03 mIRC logs, plus The Lounge's new chat, synced nightly at 5:37 AM. Bot and status channels (#MrSnoopy, announce channels, idlerpg, *status) aren't indexed. Times are Central.</p>
+</div>"""
+
+def view_help(qs):
+    return page("Help · irclogs", HELP_HTML)
+
 # ---------- http ----------
 class H(BaseHTTPRequestHandler):
     server_version = "irclogs"
@@ -437,6 +503,8 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, view_onthisday(qs))
             if u.path == "/random":
                 i = random_line(); return self.redirect(f"/ctx?id={i}#l{i}")
+            if u.path == "/help":
+                return self.send(200, view_help(qs))
             if u.path == "/me":
                 return self.send(200, view_me(qs))
             if u.path == "/quotes":
